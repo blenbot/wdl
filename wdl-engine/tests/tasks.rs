@@ -241,7 +241,6 @@ async fn run_test(test: &Path, result: &AnalysisResult) -> Result<()> {
         .ok_or_else(|| anyhow!("document does not contain a task named `{name}`"))?;
     inputs.join_paths(task, &test_dir)?;
 
-
     let write_inputs = std::env::var_os("WRITE_INPUTS").is_some();
 
     for config in configs() {
