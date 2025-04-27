@@ -300,7 +300,6 @@ impl ScatterConfig {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct TaskConfig {
     /// The default maximum number of retries to attempt if a task fails.
-    ///
     /// A task's `max_retries` requirement will override this value.
     ///
     /// Defaults to 0 (no retries).
@@ -313,7 +312,6 @@ pub struct TaskConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<String>,
     /// The default shell to use for tasks.
-    ///
     /// Defaults to `bash`.
     ///
     /// <div class="warning">
@@ -321,6 +319,10 @@ pub struct TaskConfig {
     /// not be portable to other execution engines.</div>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
+    /// When true, write a `inputs.json` in the task’s work directory after
+    /// execution.
+    #[serde(default)]
+    pub write_inputs: bool,
 }
 
 impl TaskConfig {

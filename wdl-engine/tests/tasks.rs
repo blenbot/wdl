@@ -171,23 +171,33 @@ fn compare_result(path: &Path, result: &str) -> Result<()> {
 
 /// Gets the engine configurations to use for the test.
 fn configs() -> Vec<config::Config> {
-    vec![
-        {
-            let mut config = config::Config::default();
-            config.backend.default = BackendKind::Local;
-            config
-        },
-        // Currently we limit running the Docker backend to Linux as GitHub does not have Docker
-        // installed on macOS hosted runners and the Windows hosted runners are configured to use
-        // Windows containers
+    // turn on inputs.json only when env var is set
+    let write_inputs = std::env::var_os("WRITE_INPUTS").is_some();
+
+    let mut configs = Vec::new();
+
+    // always push Local
+    {
+        let mut cfg = config::Config::default();
+        cfg.backend.default = BackendKind::Local;
+        cfg.task.write_inputs = write_inputs;
+        configs.push(cfg);
+    }
+
+    // only push Docker when *not* debugging inputs
+    if !write_inputs {
         #[cfg(target_os = "linux")]
         {
-            let mut config = config::Config::default();
-            config.backend.crankshaft.default = config::CrankshaftBackendKind::Docker;
-            config.backend.default = BackendKind::Crankshaft;
-            config
-        },
-    ]
+            let mut cfg = config::Config::default();
+            cfg.backend.default = BackendKind::Crankshaft;
+            cfg.backend.crankshaft.default = config::CrankshaftBackendKind::Docker;
+            // keep write_inputs = false here
+            cfg.task.write_inputs = false;
+            configs.push(cfg);
+        }
+    }
+
+    configs
 }
 
 /// Runs the test given the provided analysis result.
@@ -234,9 +244,19 @@ async fn run_test(test: &Path, result: &AnalysisResult) -> Result<()> {
         .ok_or_else(|| anyhow!("document does not contain a task named `{name}`"))?;
     inputs.join_paths(task, &test_dir)?;
 
+    // capture once at start
+    let write_inputs = std::env::var_os("WRITE_INPUTS").is_some();
+
     for config in configs() {
         let evaluator = TaskEvaluator::new(config, CancellationToken::new()).await?;
         let dir = TempDir::new().context("failed to create temporary directory")?;
+
+        // print debug‑work‑dir before we use it
+        if write_inputs {
+            eprintln!("💡 debug-work-dir = {}", dir.path().display());
+        }
+
+        // run your evaluation exactly as before:
         match evaluator
             .evaluate(result.document(), task, &inputs, dir.path(), |_| async {})
             .await
@@ -264,6 +284,12 @@ async fn run_test(test: &Path, result: &AnalysisResult) -> Result<()> {
                 let error = strip_paths(dir.path(), &error);
                 compare_result(&test.join("error.txt"), &error)?;
             }
+        }
+
+        // now that we've finished with `dir`, convert it
+        // into a persistent directory so it's not auto-deleted
+        if write_inputs {
+            let _p = dir.into_path();
         }
     }
 
@@ -340,6 +366,11 @@ fn compare_evaluation_results(
             )
         })?;
         if !metadata.is_file() {
+            continue;
+        }
+
+        // skip our debug-dump inputs.json so existing tests keep passing
+        if entry.file_name() == "inputs.json" {
             continue;
         }
 

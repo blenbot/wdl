@@ -529,15 +529,54 @@ impl TaskEvaluator {
         P: Fn(ProgressKind<'_>) -> R + Send + Sync + 'static,
         R: Future<Output = ()> + Send,
     {
-        self.evaluate_with_progress(
-            document,
-            task,
-            inputs,
-            root.as_ref(),
-            task.name(),
-            Arc::new(progress),
-        )
-        .await
+        let evaluated = self
+            .evaluate_with_progress(
+                document,
+                task,
+                inputs,
+                root.as_ref(),
+                task.name(),
+                Arc::new(progress),
+            )
+            .await?;
+
+        // only dump for local backend, but swallow *any* dump errors
+        if self.config.task.write_inputs && self.backend.guest_work_dir().is_none() {
+            // run all of our old dump logic in a little closure
+            if let Err(e) = (|| -> anyhow::Result<()> {
+                let mut wrapper = serde_json::Map::with_capacity(2);
+                wrapper.insert(
+                    "task".to_string(),
+                    serde_json::Value::String(task.name().to_string()),
+                );
+                let mut inputs_map = serde_json::Map::new();
+                for (k, v) in inputs.iter() {
+                    // this is the bit that used to thwack on struct inputs
+                    let val =
+                        serde_json::to_value(v).context("serializing individual task input")?;
+                    inputs_map.insert(k.to_string().clone(), val);
+                }
+                wrapper.insert("inputs".to_string(), serde_json::Value::Object(inputs_map));
+
+                let json_str = serde_json::to_string_pretty(&serde_json::Value::Object(wrapper))
+                    .context("formatting inputs.json")?;
+
+                let work_dir = evaluated
+                    .work_dir()
+                    .as_local()
+                    .expect("local work dir for inputs.json");
+                let file_path = work_dir.join("inputs.json");
+                std::fs::write(&file_path, json_str).with_context(|| {
+                    format!("writing debug inputs.json to {}", file_path.display())
+                })?;
+                Ok(())
+            })() {
+                // just log and carry on
+                tracing::warn!(error = %e, "debug‐dump of inputs.json failed");
+            }
+        }
+
+        Ok(evaluated)
     }
 
     /// Evaluates the given task with the given shared progress callback.
