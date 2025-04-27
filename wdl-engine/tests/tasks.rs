@@ -183,7 +183,6 @@ fn configs() -> Vec<config::Config> {
         configs.push(cfg);
     }
 
-    // only push Docker when *not* debugging inputs
     if !write_inputs {
         #[cfg(target_os = "linux")]
         {
